@@ -16,6 +16,7 @@ It supports **Linux & Windows**, parses the history database, shows recent visit
 ## ⚙️ Installation
 
 >git clone https://github.com/prabhsecure/History-Scraper.git
+
 >cd browser-history-scraper
 
 >python3 History_Detactive.py
