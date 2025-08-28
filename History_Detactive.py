@@ -10,9 +10,23 @@ def find_firefox_places():
     base = Path.home() / ".mozilla/firefox"
     if not base.exists():
         return None
-    for p in base.iterdir():
-        if p.is_dir() and (p / "places.sqlite").exists():
-            return p / "places.sqlite"
+
+    # First try to read profiles.ini (official way)
+    profiles_ini = base / "profiles.ini"
+    if profiles_ini.exists():
+        with open(profiles_ini, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.lower().startswith("path="):
+                    profile_path = base / line.split("=", 1)[1]
+                    db_path = profile_path / "places.sqlite"
+                    if db_path.exists():
+                        return db_path
+
+    # Fallback: brute force search
+    for p in base.rglob("places.sqlite"):
+        return p
+
     return None
 
 def find_chrome_history():
@@ -31,29 +45,37 @@ def copy_db(src, dst):
         subprocess.run(["sqlite3", str(src), f".backup {dst}"])
     return dst
 
-def parse_firefox(db_path, limit=50):
+def parse_firefox(db_path, limit=None):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    cur.execute("""
+    query = """
         SELECT url, datetime((visit_date/1000000), 'unixepoch') as vtime
         FROM moz_places, moz_historyvisits
         WHERE moz_places.id = moz_historyvisits.place_id
         ORDER BY vtime DESC
-        LIMIT ?;
-    """, (limit,))
+    """
+    if limit:
+        query += " LIMIT ?;"
+        cur.execute(query, (limit,))
+    else:
+        cur.execute(query)
     rows = cur.fetchall()
     conn.close()
     return rows
 
-def parse_chrome(db_path, limit=50):
+def parse_chrome(db_path, limit=None):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    cur.execute("""
+    query = """
         SELECT url, datetime((last_visit_time/1000000)-11644473600, 'unixepoch') as vtime
         FROM urls
         ORDER BY vtime DESC
-        LIMIT ?;
-    """, (limit,))
+    """
+    if limit:
+        query += " LIMIT ?;"
+        cur.execute(query, (limit,))
+    else:
+        cur.execute(query)
     rows = cur.fetchall()
     conn.close()
     return rows
@@ -66,7 +88,7 @@ def save_csv(rows, out_file):
     return out_file
 
 def main():
-    print("=== Mini Browser History Forensic Tool (v2 Auto Detect) ===")
+    print("=== Mini Browser History Forensic Tool (v3 Default Unlimited) ===")
     print("Choose Browser:")
     print("1. Firefox")
     print("2. Chrome")
@@ -92,12 +114,19 @@ def main():
         print("[!] Invalid choice")
         return
 
+    # User-defined limit (default = unlimited)
+    limit_input = input("Enter number of history entries to fetch (press Enter for ALL): ").strip().lower()
+    if limit_input == "all" or limit_input == "" or not limit_input.isdigit():
+        limit = None
+    else:
+        limit = int(limit_input)
+
     tmp_copy = Path.home() / "history_copy.sqlite"
     copy_db(src, tmp_copy)
     print(f"[+] Copied DB to {tmp_copy}")
 
-    rows = parser(tmp_copy, limit=200)
-    print("\n=== Last 200 History Entries ===")
+    rows = parser(tmp_copy, limit=limit)
+    print(f"\n=== Showing {len(rows)} History Entries ===")
     for url, vtime in rows:
         print(f"{vtime}  -->  {url}")
 
